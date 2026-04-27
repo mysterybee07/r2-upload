@@ -1,0 +1,14 @@
+node_modules
+dist
+
+# env files — never commit
+.env
+.env.*
+!.env.example
+
+# Vercel
+.vercel
+
+# misc
+.DS_Store
+*.log
