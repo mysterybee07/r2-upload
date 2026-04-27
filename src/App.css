@@ -132,6 +132,14 @@ button.primary:disabled {
   padding: 4px 8px;
 }
 
+.settings .select {
+  background: #0b0c10;
+  color: #e8eaed;
+  border: 1px solid #2a2d34;
+  border-radius: 6px;
+  padding: 4px 8px;
+}
+
 .small {
   font-size: 13px;
 }

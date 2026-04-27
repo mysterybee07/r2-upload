@@ -5,6 +5,14 @@ const DEFAULT_MAX_DIMENSION = 1600
 const QUALITY = 0.85
 const COMPRESSIBLE_TYPES = ['image/jpeg', 'image/png', 'image/webp']
 
+const FORMAT_OPTIONS = [
+  { value: 'original', label: 'Keep original', mime: null, ext: null },
+  { value: 'jpg', label: 'JPG', mime: 'image/jpeg', ext: 'jpg' },
+  { value: 'jpeg', label: 'JPEG', mime: 'image/jpeg', ext: 'jpeg' },
+  { value: 'png', label: 'PNG', mime: 'image/png', ext: 'png' },
+  { value: 'webp', label: 'WebP', mime: 'image/webp', ext: 'webp' },
+]
+
 export default function App() {
   const [file, setFile] = useState(null)
   const [preview, setPreview] = useState(null)
@@ -14,7 +22,7 @@ export default function App() {
   const [error, setError] = useState('')
 
   const [compressEnabled, setCompressEnabled] = useState(true)
-  const [convertWebp, setConvertWebp] = useState(true)
+  const [outputFormat, setOutputFormat] = useState('webp')
   const [maxDimension, setMaxDimension] = useState(DEFAULT_MAX_DIMENSION)
   const [stats, setStats] = useState(null)
   const [copied, setCopied] = useState(false)
@@ -62,7 +70,7 @@ export default function App() {
 
       if (compressEnabled && COMPRESSIBLE_TYPES.includes(file.type)) {
         setStatus('compressing')
-        toUpload = await compress(file, { maxDimension, convertWebp })
+        toUpload = await compress(file, { maxDimension, outputFormat })
 
         setStats({
           originalBytes: file.size,
@@ -129,13 +137,19 @@ export default function App() {
           </label>
 
           <label className="row">
-            <input
-              type="checkbox"
-              checked={convertWebp}
-              onChange={(e) => setConvertWebp(e.target.checked)}
+            <span>Output format</span>
+            <select
+              value={outputFormat}
+              onChange={(e) => setOutputFormat(e.target.value)}
               disabled={!compressEnabled}
-            />
-            <span>Convert to WebP</span>
+              className="select"
+            >
+              {FORMAT_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
           </label>
 
           <label className="row">
@@ -244,35 +258,38 @@ function CheckIcon() {
   )
 }
 
-async function compress(file, { maxDimension, convertWebp }) {
+async function compress(file, { maxDimension, outputFormat }) {
   // browser-image-compression auto-orients via EXIF when drawing to canvas,
   // preserves aspect ratio when given maxWidthOrHeight, and runs off the main thread.
-  const targetType = convertWebp && file.type !== 'image/webp' ? 'image/webp' : file.type
+  const opt = FORMAT_OPTIONS.find((o) => o.value === outputFormat)
+  const targetMime = opt?.mime || file.type
+  const targetExt = opt?.ext || null
 
   const options = {
     maxWidthOrHeight: maxDimension,
     useWebWorker: true,
     initialQuality: QUALITY,
-    fileType: targetType,
+    fileType: targetMime,
     // High ceiling — let dimension + quality drive the result, not aggressive size targeting.
     maxSizeMB: 10,
   }
 
   const compressed = await imageCompression(file, options)
 
-  // If compression made the file bigger (rare, e.g. tiny PNG → WebP overhead), keep the original.
-  if (compressed.size >= file.size && compressed.type === file.type) {
+  // If compression made the file bigger (rare, e.g. tiny PNG → WebP overhead) and the user
+  // didn't ask for a different format, keep the original.
+  if (compressed.size >= file.size && compressed.type === file.type && !targetExt) {
     return file
   }
 
-  // Rename so the extension matches the final mime type.
-  const newName = renameForType(file.name, compressed.type)
+  // Rename so the extension matches the final mime type (or the user's chosen extension).
+  const newName = renameForType(file.name, compressed.type, targetExt)
   return new File([compressed], newName, { type: compressed.type, lastModified: Date.now() })
 }
 
-function renameForType(name, mime) {
+function renameForType(name, mime, preferredExt) {
   const extMap = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }
-  const ext = extMap[mime]
+  const ext = preferredExt || extMap[mime]
   if (!ext) return name
   const base = name.replace(/\.[^./\\]+$/, '')
   return `${base}.${ext}`
