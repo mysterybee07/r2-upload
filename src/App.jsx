@@ -12,20 +12,32 @@ const FORMAT_OPTIONS = [
   { value: 'png', label: 'PNG', mime: 'image/png', ext: 'png' },
   { value: 'webp', label: 'WebP', mime: 'image/webp', ext: 'webp' },
 ]
+const CUSTOM_COMPANY_OPTION = '__custom__'
 
 export default function App() {
+  const initialCompany = getCompanyFromQuery()
+  const [folder, setFolder] = useState('')
+  const [companyOptions, setCompanyOptions] = useState([])
   const [file, setFile] = useState(null)
   const [preview, setPreview] = useState(null)
   const [status, setStatus] = useState('idle')
   const [progress, setProgress] = useState(0)
   const [uploadedUrl, setUploadedUrl] = useState('')
   const [error, setError] = useState('')
+  const [customCompany, setCustomCompany] = useState(initialCompany)
+  const [selectedCompany, setSelectedCompany] = useState(initialCompany || '')
 
   const [compressEnabled, setCompressEnabled] = useState(true)
   const [outputFormat, setOutputFormat] = useState('webp')
   const [maxDimension, setMaxDimension] = useState(DEFAULT_MAX_DIMENSION)
   const [stats, setStats] = useState(null)
   const [copied, setCopied] = useState(false)
+  const company = selectedCompany === CUSTOM_COMPANY_OPTION ? customCompany.trim() : selectedCompany
+  const storageOptions = [
+    { value: '', label: 'Default' },
+    ...companyOptions,
+    { value: CUSTOM_COMPANY_OPTION, label: 'Custom' },
+  ]
 
   // Auto-copy the public URL the moment an upload completes.
   useEffect(() => {
@@ -38,6 +50,53 @@ export default function App() {
       }
     })
   }, [uploadedUrl])
+
+  useEffect(() => {
+    let cancelled = false
+
+    fetch('/api/companies')
+      .then((res) => {
+        if (!res.ok) throw new Error(`Company list failed (${res.status})`)
+        return res.json()
+      })
+      .then((data) => {
+        if (cancelled) return
+        setCompanyOptions(Array.isArray(data.companies) ? data.companies : [])
+      })
+      .catch(() => {
+        if (cancelled) return
+        setCompanyOptions([])
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!initialCompany) return
+
+    const matched = companyOptions.find(
+      (opt) => opt.value.toLowerCase() === initialCompany.toLowerCase(),
+    )
+
+    if (matched) {
+      setSelectedCompany(matched.value)
+      setCustomCompany('')
+      return
+    }
+
+    setSelectedCompany(CUSTOM_COMPANY_OPTION)
+    setCustomCompany(initialCompany)
+  }, [companyOptions, initialCompany])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const url = new URL(window.location.href)
+    if (company) url.searchParams.set('company', company)
+    else url.searchParams.delete('company')
+    window.history.replaceState({}, '', url)
+  }, [company])
 
   async function onCopyClick() {
     const ok = await copyToClipboard(uploadedUrl)
@@ -81,10 +140,13 @@ export default function App() {
       }
 
       setStatus('presigning')
-      const presignRes = await fetch('/api/presign', {
+      const presignUrl = company ? `/api/presign?company=${encodeURIComponent(company)}` : '/api/presign'
+      const presignRes = await fetch(presignUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          company,
+          folder,
           filename: toUpload.name,
           contentType: toUpload.type || 'application/octet-stream',
         }),
@@ -116,6 +178,55 @@ export default function App() {
       <p className="muted">Pick an image, upload it to Cloudflare R2, and get a public URL.</p>
 
       <div className="card">
+        <fieldset className="settings" disabled={busy}>
+          <legend>Storage</legend>
+
+          <label className="row">
+            <span>Company</span>
+            <select
+              value={selectedCompany}
+              onChange={(e) => setSelectedCompany(e.target.value)}
+              className="select"
+            >
+              {storageOptions.map((opt) => (
+                <option key={opt.value || 'default'} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {selectedCompany === CUSTOM_COMPANY_OPTION && (
+            <label className="row">
+              <span>Custom name</span>
+              <input
+                type="text"
+                value={customCompany}
+                onChange={(e) => setCustomCompany(e.target.value)}
+                placeholder="Enter company"
+                className="text-input"
+              />
+            </label>
+          )}
+
+          <label className="row">
+            <span>Folder</span>
+            <input
+              type="text"
+              value={folder}
+              onChange={(e) => setFolder(e.target.value)}
+              placeholder="Leave empty to use env default"
+              className="text-input"
+            />
+          </label>
+
+          <p className="hint">
+            {company
+              ? `Uploads will use the ${company} R2 configuration${folder.trim() ? ` and folder ${folder.trim()}.` : '.'}`
+              : `Uploads will use the default R2 configuration${folder.trim() ? ` and folder ${folder.trim()}.` : '.'}`}
+          </p>
+        </fieldset>
+
         <input type="file" accept="image/*" onChange={onFileChange} disabled={busy} />
 
         {preview && (
@@ -218,6 +329,11 @@ export default function App() {
       </div>
     </main>
   )
+}
+
+function getCompanyFromQuery() {
+  if (typeof window === 'undefined') return ''
+  return new URLSearchParams(window.location.search).get('company')?.trim() || ''
 }
 
 async function copyToClipboard(text) {

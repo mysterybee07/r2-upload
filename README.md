@@ -45,12 +45,30 @@ Copy `.env.example` → `.env.local` and fill in:
 | Variable | Example | Notes |
 |---|---|---|
 | `STORAGE_PROVIDER` | `r2` | Must be the literal string `r2`. |
-| `R2_ACCOUNT_ID` | `213ad566…` | Your Cloudflare account ID. |
-| `R2_BUCKET` | `my-bucket` | Bucket name. |
-| `R2_ACCESS_KEY_ID` | `…` | From R2 → Manage R2 API Tokens. |
-| `R2_SECRET_ACCESS_KEY` | `…` | From R2 → Manage R2 API Tokens. |
-| `R2_ENDPOINT` | `https://<account-id>.r2.cloudflarestorage.com` | S3-compatible endpoint. |
-| `R2_PUBLIC_BASE_URL` | `https://pub-xxx.r2.dev` or `https://cdn.example.com` | Used to build the returned public URL. No trailing slash needed. |
+| `R2_BUCKET` | `default-bucket` | Default bucket used when `company` is not provided. |
+| `R2_ACCESS_KEY_ID` | `…` | Default R2 access key. |
+| `R2_SECRET_ACCESS_KEY` | `…` | Default R2 secret key. |
+| `R2_ENDPOINT` | `https://<account-id>.r2.cloudflarestorage.com` | Default S3-compatible endpoint. |
+| `R2_PUBLIC_BASE_URL` | `https://pub-xxx.r2.dev` or `https://cdn.example.com` | Default public base URL. |
+| `R2_FOLDER` | `uploads` | Default folder/prefix for created object keys. |
+| `R2_<COMPANY>_BUCKET` | `my-bucket` | Bucket name for that company. |
+| `R2_<COMPANY>_ACCESS_KEY_ID` | `…` | From R2 → Manage R2 API Tokens. |
+| `R2_<COMPANY>_SECRET_ACCESS_KEY` | `…` | From R2 → Manage R2 API Tokens. |
+| `R2_<COMPANY>_ENDPOINT` | `https://<account-id>.r2.cloudflarestorage.com` | S3-compatible endpoint for that company. |
+| `R2_<COMPANY>_PUBLIC_BASE_URL` | `https://pub-xxx.r2.dev` or `https://cdn.example.com` | Used to build the returned public URL. No trailing slash needed. |
+| `R2_<COMPANY>_FOLDER` | `uploads/moneymitra` | Folder/prefix for that company's object keys. |
+
+`<COMPANY>` comes from the page query string. Example: opening the app with `?company=acme`
+will make `/api/presign` read `R2_ACME_BUCKET`, `R2_ACME_ACCESS_KEY_ID`, and the rest of the
+`R2_ACME_*` variables. Company names are normalized to uppercase with non-alphanumeric
+characters converted to `_`, so `?company=foo-bar` maps to `R2_FOO_BAR_*`. Case does not matter:
+`moneymitra`, `MoneyMitra`, and `MONEYMITRA` all resolve to `R2_MONEYMITRA_*`. If no `company`
+is provided, the API falls back to the default `R2_*` variables. The object key prefix also comes
+from env via `R2_FOLDER` or `R2_<COMPANY>_FOLDER`. If the frontend sends a `folder` value in the
+upload request body, that folder is used instead of the env default.
+
+The frontend company dropdown is populated from server env, so only companies that actually have
+an `R2_<COMPANY>_BUCKET` value configured are shown as options.
 
 **Never put real values in `.env.example`.** The pre-commit hook (see below) will block any commit that does.
 
