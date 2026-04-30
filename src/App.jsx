@@ -174,8 +174,8 @@ export default function App() {
 
   return (
     <main className="container">
-      <h1>R2 Image Upload</h1>
-      <p className="muted">Pick an image, upload it to Cloudflare R2, and get a public URL.</p>
+      <h1>R2 File Upload</h1>
+      <p className="muted">Pick a file, upload it to Cloudflare R2, and get a public URL.</p>
 
       <div className="card">
         <fieldset className="settings" disabled={busy}>
@@ -227,9 +227,9 @@ export default function App() {
           </p>
         </fieldset>
 
-        <input type="file" accept="image/*" onChange={onFileChange} disabled={busy} />
+        <input type="file" onChange={onFileChange} disabled={busy} />
 
-        {preview && (
+        {preview && file?.type?.startsWith('image/') && (
           <div className="preview">
             <img src={preview} alt="preview" />
           </div>
@@ -244,7 +244,7 @@ export default function App() {
               checked={compressEnabled}
               onChange={(e) => setCompressEnabled(e.target.checked)}
             />
-            <span>Compress before upload</span>
+            <span>Compress images before upload</span>
           </label>
 
           <label className="row">

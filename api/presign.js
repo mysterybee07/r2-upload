@@ -189,8 +189,8 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Invalid filename' })
   }
 
-  if (!contentType || typeof contentType !== 'string' || !contentType.startsWith('image/')) {
-    return res.status(400).json({ error: 'Only image content types are allowed' })
+  if (!contentType || typeof contentType !== 'string' || contentType.length > 255) {
+    return res.status(400).json({ error: 'Invalid content type' })
   }
 
   try {
