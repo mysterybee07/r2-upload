@@ -12,26 +12,26 @@ const FORMAT_OPTIONS = [
   { value: 'png', label: 'PNG', mime: 'image/png', ext: 'png' },
   { value: 'webp', label: 'WebP', mime: 'image/webp', ext: 'webp' },
 ]
+
 const CUSTOM_COMPANY_OPTION = '__custom__'
 
 export default function App() {
   const initialCompany = getCompanyFromQuery()
   const [folder, setFolder] = useState('')
   const [companyOptions, setCompanyOptions] = useState([])
-  const [file, setFile] = useState(null)
-  const [preview, setPreview] = useState(null)
+  const [files, setFiles] = useState([])
   const [status, setStatus] = useState('idle')
   const [progress, setProgress] = useState(0)
-  const [uploadedUrl, setUploadedUrl] = useState('')
+  const [uploadedFiles, setUploadedFiles] = useState([])
   const [error, setError] = useState('')
   const [customCompany, setCustomCompany] = useState(initialCompany)
   const [selectedCompany, setSelectedCompany] = useState(initialCompany || '')
-
   const [compressEnabled, setCompressEnabled] = useState(true)
   const [outputFormat, setOutputFormat] = useState('webp')
   const [maxDimension, setMaxDimension] = useState(DEFAULT_MAX_DIMENSION)
-  const [stats, setStats] = useState(null)
-  const [copied, setCopied] = useState(false)
+  const [stats, setStats] = useState([])
+  const [copiedUrl, setCopiedUrl] = useState('')
+
   const company = selectedCompany === CUSTOM_COMPANY_OPTION ? customCompany.trim() : selectedCompany
   const storageOptions = [
     { value: '', label: 'Default' },
@@ -39,17 +39,18 @@ export default function App() {
     { value: CUSTOM_COMPANY_OPTION, label: 'Custom' },
   ]
 
-  // Auto-copy the public URL the moment an upload completes.
   useEffect(() => {
-    if (!uploadedUrl) return
-    copyToClipboard(uploadedUrl).then((ok) => {
+    const latestUrl = uploadedFiles.at(-1)?.publicUrl
+    if (!latestUrl) return
+
+    copyToClipboard(latestUrl).then((ok) => {
       if (ok) {
-        setCopied(true)
-        const t = setTimeout(() => setCopied(false), 1500)
+        setCopiedUrl(latestUrl)
+        const t = setTimeout(() => setCopiedUrl(''), 1500)
         return () => clearTimeout(t)
       }
     })
-  }, [uploadedUrl])
+  }, [uploadedFiles])
 
   useEffect(() => {
     let cancelled = false
@@ -98,71 +99,90 @@ export default function App() {
     window.history.replaceState({}, '', url)
   }, [company])
 
-  async function onCopyClick() {
-    const ok = await copyToClipboard(uploadedUrl)
+  async function onCopyClick(text) {
+    const ok = await copyToClipboard(text)
     if (ok) {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
+      setCopiedUrl(text)
+      setTimeout(() => setCopiedUrl(''), 1500)
     }
   }
 
   function onFileChange(e) {
-    const f = e.target.files?.[0]
-    if (!f) return
-    setFile(f)
-    setUploadedUrl('')
+    const nextFiles = Array.from(e.target.files || [])
+    if (nextFiles.length === 0) return
+
+    setFiles(nextFiles)
+    setUploadedFiles([])
     setError('')
     setProgress(0)
-    setStats(null)
+    setStats([])
     setStatus('idle')
-    setPreview(URL.createObjectURL(f))
   }
 
   async function onUpload() {
-    if (!file) return
+    if (files.length === 0) return
+
     setError('')
     setProgress(0)
-    setStats(null)
+    setStats([])
+    setUploadedFiles([])
 
     try {
-      let toUpload = file
+      const uploaded = []
+      const collectedStats = []
 
-      if (compressEnabled && COMPRESSIBLE_TYPES.includes(file.type)) {
-        setStatus('compressing')
-        toUpload = await compress(file, { maxDimension, outputFormat })
+      for (const [index, file] of files.entries()) {
+        let toUpload = file
 
-        setStats({
-          originalBytes: file.size,
-          compressedBytes: toUpload.size,
-          originalType: file.type,
-          finalType: toUpload.type,
+        if (compressEnabled && COMPRESSIBLE_TYPES.includes(file.type)) {
+          setStatus('compressing')
+          toUpload = await compress(file, { maxDimension, outputFormat })
+          collectedStats.push({
+            name: file.name,
+            originalBytes: file.size,
+            compressedBytes: toUpload.size,
+            originalType: file.type,
+            finalType: toUpload.type,
+          })
+          setStats([...collectedStats])
+        }
+
+        setStatus('presigning')
+        const presignUrl = company ? `/api/presign?company=${encodeURIComponent(company)}` : '/api/presign'
+        const presignRes = await fetch(presignUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            company,
+            folder,
+            filename: toUpload.name,
+            contentType: toUpload.type || 'application/octet-stream',
+          }),
         })
-      }
 
-      setStatus('presigning')
-      const presignUrl = company ? `/api/presign?company=${encodeURIComponent(company)}` : '/api/presign'
-      const presignRes = await fetch(presignUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          company,
-          folder,
-          filename: toUpload.name,
+        if (!presignRes.ok) {
+          const body = await presignRes.json().catch(() => ({}))
+          throw new Error(body.error || `Presign failed (${presignRes.status})`)
+        }
+
+        const { uploadUrl, publicUrl, key } = await presignRes.json()
+
+        setStatus('uploading')
+        await uploadWithProgress(uploadUrl, toUpload, (fileProgress) => {
+          const overall = ((index + fileProgress / 100) / files.length) * 100
+          setProgress(Math.round(overall))
+        })
+
+        uploaded.push({
+          name: toUpload.name,
+          publicUrl,
+          key,
           contentType: toUpload.type || 'application/octet-stream',
-        }),
-      })
-
-      if (!presignRes.ok) {
-        const body = await presignRes.json().catch(() => ({}))
-        throw new Error(body.error || `Presign failed (${presignRes.status})`)
+        })
+        setUploadedFiles([...uploaded])
       }
 
-      const { uploadUrl, publicUrl } = await presignRes.json()
-
-      setStatus('uploading')
-      await uploadWithProgress(uploadUrl, toUpload, setProgress)
-
-      setUploadedUrl(publicUrl)
+      setProgress(100)
       setStatus('done')
     } catch (err) {
       setError(err.message || String(err))
@@ -171,11 +191,12 @@ export default function App() {
   }
 
   const busy = status === 'uploading' || status === 'presigning' || status === 'compressing'
+  const imagePreviews = files.filter((file) => file.type?.startsWith('image/')).slice(0, 4)
 
   return (
     <main className="container">
       <h1>R2 File Upload</h1>
-      <p className="muted">Pick a file, upload it to Cloudflare R2, and get a public URL.</p>
+      <p className="muted">Pick one or more files, upload them to Cloudflare R2, and get public URLs.</p>
 
       <div className="card">
         <fieldset className="settings" disabled={busy}>
@@ -227,11 +248,31 @@ export default function App() {
           </p>
         </fieldset>
 
-        <input type="file" onChange={onFileChange} disabled={busy} />
+        <input type="file" multiple onChange={onFileChange} disabled={busy} />
 
-        {preview && file?.type?.startsWith('image/') && (
-          <div className="preview">
-            <img src={preview} alt="preview" />
+        {files.length > 0 && (
+          <div className="selection">
+            <span className="selection-label">
+              {files.length} file{files.length === 1 ? '' : 's'} selected
+            </span>
+            <div className="selection-list">
+              {files.map((file) => (
+                <div key={`${file.name}-${file.size}-${file.lastModified}`} className="selection-item">
+                  <span className="selection-name">{file.name}</span>
+                  <span className="muted small">{formatBytes(file.size)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {imagePreviews.length > 0 && (
+          <div className="preview-grid">
+            {imagePreviews.map((file) => (
+              <div key={`${file.name}-${file.lastModified}`} className="preview">
+                <img src={URL.createObjectURL(file)} alt={file.name} />
+              </div>
+            ))}
           </div>
         )}
 
@@ -279,14 +320,14 @@ export default function App() {
           </label>
         </fieldset>
 
-        <button className="primary" onClick={onUpload} disabled={!file || busy}>
+        <button className="primary" onClick={onUpload} disabled={files.length === 0 || busy}>
           {status === 'compressing'
-            ? 'Compressing…'
+            ? 'Compressing...'
             : status === 'uploading'
-            ? `Uploading… ${progress}%`
+            ? `Uploading... ${progress}%`
             : status === 'presigning'
-            ? 'Preparing…'
-            : 'Upload to R2'}
+            ? 'Preparing...'
+            : `Upload ${files.length || ''} ${files.length === 1 ? 'file' : 'files'} to R2`}
         </button>
 
         {(status === 'uploading' || (status === 'done' && progress > 0)) && (
@@ -295,35 +336,46 @@ export default function App() {
           </div>
         )}
 
-        {stats && (
-          <p className="muted small">
-            {formatBytes(stats.originalBytes)} → {formatBytes(stats.compressedBytes)} (
-            {savedPct(stats.originalBytes, stats.compressedBytes)}% smaller
-            {stats.originalType !== stats.finalType ? `, ${stats.finalType.replace('image/', '')}` : ''})
-          </p>
+        {stats.length > 0 && (
+          <div className="stats-list">
+            {stats.map((stat) => (
+              <p key={stat.name} className="muted small">
+                {stat.name}: {formatBytes(stat.originalBytes)} {'->'} {formatBytes(stat.compressedBytes)} (
+                {savedPct(stat.originalBytes, stat.compressedBytes)}% smaller
+                {stat.originalType !== stat.finalType ? `, ${stat.finalType.replace('image/', '')}` : ''})
+              </p>
+            ))}
+          </div>
         )}
 
         {error && <p className="error">{error}</p>}
 
-        {uploadedUrl && (
+        {uploadedFiles.length > 0 && (
           <div className="result">
             <div className="result-head">
-              <span className="result-label">Uploaded {copied ? '· copied to clipboard' : ''}</span>
+              <span className="result-label">
+                Uploaded {uploadedFiles.length} file{uploadedFiles.length === 1 ? '' : 's'}
+              </span>
             </div>
-            <div className="result-url">
-              <a href={uploadedUrl} target="_blank" rel="noreferrer" title={uploadedUrl}>
-                {uploadedUrl}
-              </a>
-              <button
-                type="button"
-                className="copy-btn"
-                onClick={onCopyClick}
-                aria-label={copied ? 'Copied' : 'Copy URL'}
-                title={copied ? 'Copied' : 'Copy URL'}
-              >
-                {copied ? <CheckIcon /> : <CopyIcon />}
-              </button>
-            </div>
+            {uploadedFiles.map((item) => (
+              <div key={item.publicUrl} className="result-url">
+                <div className="result-meta">
+                  <span className="selection-name">{item.name}</span>
+                  <a href={item.publicUrl} target="_blank" rel="noreferrer" title={item.publicUrl}>
+                    {item.publicUrl}
+                  </a>
+                </div>
+                <button
+                  type="button"
+                  className="copy-btn"
+                  onClick={() => onCopyClick(item.publicUrl)}
+                  aria-label={copiedUrl === item.publicUrl ? 'Copied' : 'Copy URL'}
+                  title={copiedUrl === item.publicUrl ? 'Copied' : 'Copy URL'}
+                >
+                  {copiedUrl === item.publicUrl ? <CheckIcon /> : <CopyIcon />}
+                </button>
+              </div>
+            ))}
           </div>
         )}
       </div>
@@ -342,7 +394,7 @@ async function copyToClipboard(text) {
       await navigator.clipboard.writeText(text)
       return true
     }
-    // Fallback for non-secure contexts (e.g. plain http on a remote dev machine)
+
     const ta = document.createElement('textarea')
     ta.value = text
     ta.style.position = 'fixed'
@@ -375,8 +427,6 @@ function CheckIcon() {
 }
 
 async function compress(file, { maxDimension, outputFormat }) {
-  // browser-image-compression auto-orients via EXIF when drawing to canvas,
-  // preserves aspect ratio when given maxWidthOrHeight, and runs off the main thread.
   const opt = FORMAT_OPTIONS.find((o) => o.value === outputFormat)
   const targetMime = opt?.mime || file.type
   const targetExt = opt?.ext || null
@@ -386,19 +436,15 @@ async function compress(file, { maxDimension, outputFormat }) {
     useWebWorker: true,
     initialQuality: QUALITY,
     fileType: targetMime,
-    // High ceiling — let dimension + quality drive the result, not aggressive size targeting.
     maxSizeMB: 10,
   }
 
   const compressed = await imageCompression(file, options)
 
-  // If compression made the file bigger (rare, e.g. tiny PNG → WebP overhead) and the user
-  // didn't ask for a different format, keep the original.
   if (compressed.size >= file.size && compressed.type === file.type && !targetExt) {
     return file
   }
 
-  // Rename so the extension matches the final mime type (or the user's chosen extension).
   const newName = renameForType(file.name, compressed.type, targetExt)
   return new File([compressed], newName, { type: compressed.type, lastModified: Date.now() })
 }

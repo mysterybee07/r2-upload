@@ -1,6 +1,5 @@
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
-import { randomUUID } from 'node:crypto'
 
 function env(name) {
   const v = process.env[name]
@@ -113,11 +112,13 @@ function getCompanyConfig(company) {
   }
 }
 
-function sanitizeExt(filename) {
-  const dot = filename.lastIndexOf('.')
-  if (dot === -1 || dot === filename.length - 1) return 'bin'
-  const ext = filename.slice(dot + 1).toLowerCase()
-  return /^[a-z0-9]{1,8}$/.test(ext) ? ext : 'bin'
+function sanitizeFilename(filename) {
+  const base = filename
+    .trim()
+    .replace(/[/\\]+/g, '_')
+    .replace(/[\u0000-\u001f\u007f]+/g, '')
+
+  return base || 'file'
 }
 
 function sanitizeFolder(folder) {
@@ -194,9 +195,9 @@ export default async function handler(req, res) {
   }
 
   try {
-    const ext = sanitizeExt(filename)
+    const safeFilename = sanitizeFilename(filename)
     const folder = sanitizeFolder(folderParam || companyConfig.config.folder)
-    const key = `${folder}/${Date.now()}-${randomUUID()}.${ext}`
+    const key = `${folder}/${safeFilename}`
 
     const command = new PutObjectCommand({
       Bucket: companyConfig.config.bucket,
